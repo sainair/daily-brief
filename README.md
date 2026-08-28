@@ -21,6 +21,21 @@ Built as a small, real automation project covering calendar/recurrence parsing, 
 
 ---
 
+## AI-assisted development
+
+Built end-to-end with **Claude Code** (Anthropic's agentic CLI), running on **Claude Sonnet 5**, used as the primary development tool rather than as an autocomplete layer inside an editor.
+
+The integration was terminal-native: the agent had direct read/write access to the project directory and a real shell, so most work followed *edit → typecheck → run a script against a synthetic fixture → confirm the output → move on*, rather than describing a change and pasting it in by hand. Concretely, in this project that meant:
+
+- **Scaffolding.** `package.json`, `tsconfig.json`, `vercel.json`, and the `lib/`/`api/`/`scripts/` modules were generated from a plain-language spec gathered through a short round of clarifying questions (ICS feed vs. Calendar API, Gmail API vs. SMTP, Node vs. another runtime, Vercel Cron vs. a different scheduler).
+- **Catching a real production bug through disciplined local testing, not luck.** `node-ical`/`rrule`'s recurrence engine turned out to depend on the *server's* local timezone — invisible on the developer's own machine, which happened to share a timezone with the calendar under test, and only would have surfaced after deploying to Vercel's UTC runtime. It was caught before deploy by having the agent re-run the same fixture under several simulated server timezones (`TZ=UTC`, `America/Chicago`, `America/New_York`, `Asia/Tokyo`) in the same terminal session and diffing the results, instead of trusting a single passing local run.
+- **Visual design iteration via live preview, not blind edits.** The email's HTML/CSS went through several rounds of redesign — including a full palette change and a from-scratch icon rework after a side-by-side comparison against a reference photo showed the first attempt didn't hold up — with each iteration published to a shareable live preview page and reviewed in an actual browser, rather than sending real test emails to check every change.
+- **Dependency security review.** `npm audit` findings were traced back to their actual source packages instead of resolved with a blanket `npm audit fix --force`; a vulnerable dependency was pinned to a specific version chosen deliberately to avoid a breaking API change in a library the recurrence-parsing logic depends on.
+
+Deploy and version-control actions — `git push`, `vercel --prod`, Google Cloud Console configuration — were deliberately kept manual throughout: the agent produced the exact commands and steps, but the developer ran them.
+
+---
+
 ## Key features
 
 **Recurrence-aware calendar parsing.** Expands `RRULE`-based recurring events, including exceptions (`EXDATE`) and single moved/edited instances (`RECURRENCE-ID` overrides), rather than only handling one-off events.
