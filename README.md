@@ -1,118 +1,221 @@
 # Briefer
 
-Emails a daily agenda brief built from an ICS calendar feed. Runs as a
-Vercel Cron job; sends via the Gmail API.
+**Live:** [briefer-plum.vercel.app](https://briefer-plum.vercel.app) *(a placeholder page — the actual product is the email, not a UI)*
 
-Each morning it lists today's events (time, location, attendees), all-day
-items, and the open gaps in your schedule (8am–6pm Central by default), then
-emails it as both plain text and HTML.
+A daily agenda emailed straight from a calendar feed. No dashboard to check, no app to open — the schedule for today just shows up in your inbox every morning, built from the calendar you already use.
 
-## How it's put together
+Built as a small, real automation project covering calendar/recurrence parsing, timezone-correct scheduling on a serverless platform, and OAuth-based email delivery — the kind of infrastructure that looks trivial until it has to survive a daylight-saving transition or a server in a different timezone than the one it was tested on.
 
-- [`lib/ics.ts`](lib/ics.ts) — fetches and parses the ICS feed, expanding
-  recurring events (including exceptions and moved/edited single instances)
-  and returning everything that overlaps today in `America/Chicago`.
-- [`lib/brief.ts`](lib/brief.ts) — turns those events into the email subject,
-  plain-text body, and HTML body, including the free-time gap calculation.
-- [`lib/email.ts`](lib/email.ts) — sends the brief through the Gmail API
-  using a stored OAuth refresh token.
-- [`lib/run.ts`](lib/run.ts) — ties the above together and decides (based on
-  the current hour in `America/Chicago`) whether this invocation should
-  actually send.
-- [`api/daily-brief.ts`](api/daily-brief.ts) — the Vercel serverless function
-  that Cron hits.
-- [`vercel.json`](vercel.json) — schedules that function twice daily, at
-  12:00 and 13:00 UTC. Only one of those two firings will match 7:00 AM
-  Central on any given day — the other is a no-op — which is how the send
-  time stays correct across the DST transition without needing a
-  timezone-aware cron scheduler (Vercel Cron only speaks UTC).
+---
 
-## One-time setup
+## Tech stack
 
-### 1. Get your calendar's private ICS URL
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js, TypeScript |
+| Calendar parsing | `node-ical`, `rrule` |
+| Email delivery | Gmail API (`googleapis`), OAuth2 refresh token |
+| Timezone handling | `date-fns` / `date-fns-tz` |
+| Hosting | Vercel (serverless function + Cron) |
+| Local tooling | `ts-node`, `dotenv` |
 
-You said you already have this (e.g. Google Calendar's Settings →
-"Integrate calendar" → **Secret address in iCal format**). Keep it secret —
-anyone with the URL can read your calendar.
+---
 
-### 2. Create a Gmail API OAuth client
+## Key features
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create
-   (or reuse) a project.
-2. **APIs & Services → Library** — enable the **Gmail API**.
-3. **APIs & Services → OAuth consent screen** — set it up in Testing mode
-   (External is fine); add `sai150306@gmail.com` as a test user.
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
-   — Application type **Desktop app**. Note the generated Client ID and
-   Client Secret.
+**Recurrence-aware calendar parsing.** Expands `RRULE`-based recurring events, including exceptions (`EXDATE`) and single moved/edited instances (`RECURRENCE-ID` overrides), rather than only handling one-off events.
 
-### 3. Install dependencies and configure `.env`
+**Server-timezone-independent by design.** `node-ical`'s recurrence engine ties its own occurrence math to the *server's local timezone* — a bug that only surfaces when the server's clock doesn't match the calendar's, which local development will never catch by accident. Every date computation here works from explicit timezone conversions instead, and is validated by re-running the same fixtures under several simulated server timezones (UTC, Chicago, New York, Tokyo).
+
+**DST-correct daily send with no timezone-aware scheduler.** Vercel Cron only speaks UTC, so the function is scheduled to fire twice a day, bracketing the target local hour across both standard and daylight time. The code itself checks the current hour in the target timezone and only one of the two firings ever actually sends.
+
+**Skips quietly on empty days.** If there's nothing on the calendar for the day, no email goes out at all — no "you have nothing today" noise on a free Saturday.
+
+**Dark, illustrated HTML email with a plain-text fallback.** A single committed dark-navy theme (not a light/dark toggle) so it renders identically regardless of the recipient's own mail client theme, plus a full plain-text version in the same MIME message for clients that don't render HTML.
+
+**A protected trigger endpoint.** The Cron target is a plain HTTP endpoint, so it's guarded by a shared secret Vercel attaches automatically to its own requests — without it, anyone finding the URL could trigger a send or read calendar contents back in the response.
+
+---
+
+## Architecture
+
+```
+Vercel Cron                  api/daily-brief.ts                 External services
+(12:00 & 13:00 UTC daily)    (serverless function)
+      │                            │
+      │  GET, Bearer CRON_SECRET   │
+      ├───────────────────────────►│
+      │                            │──── fetch ICS feed ───────► Calendar provider
+      │                            │◄─────────────────────────── (private ICS URL)
+      │                            │
+      │                            │  lib/ics.ts   → parse + expand recurrence
+      │                            │  lib/brief.ts → build subject/text/html
+      │                            │  lib/run.ts   → decide: send or skip
+      │                            │
+      │                            │──── send (if not skipped) ─► Gmail API
+      │                            │◄─────────────────────────── (OAuth refresh token)
+      │                            │
+      │◄─────── 200 JSON ──────────┤
+```
+
+The function never talks to a database — the ICS feed *is* the data source, fetched fresh on every invocation. Nothing about a day's brief is persisted between runs.
+
+### Pipeline shape
+
+```
+getEventsForDay(icsUrl, date)  →  BriefEvent[]  →  buildBrief(events, date)  →  sendBriefEmail(...)
+                                                     { subject, text, html }
+```
+
+```
+BriefEvent
+──────────
+title
+start, end     (real UTC instants — recurrence/DST already resolved)
+allDay
+location
+attendees[]
+```
+
+`runDailyBrief()` in [`lib/run.ts`](lib/run.ts) is the only place these three steps are wired together, and it's the one both `api/daily-brief.ts` (production) and `scripts/run-local.ts --send` (local testing) call into — so a local test exercises the exact same send-or-skip logic that runs in Vercel, not a separate approximation of it.
+
+---
+
+## Running it
+
+**Prerequisites:** Node.js, a private ICS calendar URL, a Gmail account you're willing to send from.
 
 ```bash
+git clone https://github.com/sainair/daily-brief.git
+cd daily-brief
 npm install
 cp .env.example .env
 ```
 
-Fill in `.env`:
-- `ICS_URL` — your private ICS feed URL
-- `EMAIL_FROM` / `EMAIL_TO` — both `sai150306@gmail.com`
-- `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` — from step 2
+### 1. Get your calendar's private ICS URL
 
-### 4. Get a Gmail refresh token (one-time, run locally)
+Google Calendar: Settings → the calendar → **Integrate calendar** → **Secret address in iCal format**. Keep it secret — anyone with the URL can read the calendar.
+
+### 2. Create a Gmail API OAuth client
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project.
+2. **APIs & Services → Library** — enable the **Gmail API**.
+3. **APIs & Services → OAuth consent screen** — Testing mode is fine; add the sending Gmail account as a test user, and add the `gmail.send` scope under **Data Access**.
+4. **Clients → Create Client** — Application type **Desktop app**. Note the Client ID and Secret.
+
+### 3. Fill in `.env`
+
+```
+ICS_URL=<your private ICS feed URL>
+EMAIL_FROM=<sending Gmail address>
+EMAIL_TO=<recipient address>
+GMAIL_CLIENT_ID=<from step 2>
+GMAIL_CLIENT_SECRET=<from step 2>
+GMAIL_REFRESH_TOKEN=<see step 4>
+SEND_HOUR_LOCAL=7
+CRON_SECRET=<any random string — see below>
+```
+
+### 4. Get a Gmail refresh token (one-time)
 
 ```bash
 npm run get-refresh-token
 ```
 
-This opens a Google consent screen in your browser (sign in as
-`sai150306@gmail.com`, grant the "send email" permission). It then prints a
-`GMAIL_REFRESH_TOKEN` value — add it to `.env`.
+Opens a Google consent screen locally; sign in as the sending account and grant the send permission. Prints a `GMAIL_REFRESH_TOKEN` value to put in `.env`.
 
-### 5. Test locally before deploying
+### 5. Test locally
 
 ```bash
-npm run brief:local            # prints today's brief to the console only
-npm run brief:local -- --send  # also actually sends the email now
+npm run brief:local                        # preview today's brief, no email sent
+npm run brief:local -- --date=2026-08-29   # preview a specific date
+npm run brief:local -- --send              # run the real send-or-skip logic
 ```
 
-### 6. Deploy to Vercel
+### 6. Deploy
 
 ```bash
-npm i -g vercel   # if you don't have it
+npm i -g vercel
 vercel
 ```
 
-Then, in the Vercel project's **Settings → Environment Variables**, add
-every variable from `.env` (`ICS_URL`, `EMAIL_FROM`, `EMAIL_TO`,
-`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, and
-optionally `CRON_SECRET`/`SEND_HOUR_LOCAL`), then redeploy:
+Add every variable from `.env` to the Vercel project's **Settings → Environment Variables** (Production scope — Vercel Cron only ever runs against Production), then:
 
 ```bash
 vercel --prod
 ```
 
-Vercel will pick up `vercel.json` and register the two daily cron
-invocations automatically.
+`vercel.json` registers the two daily Cron invocations automatically.
 
-### 7. (Recommended) Protect the endpoint
+| Service | URL |
+|---|---|
+| App | [briefer-plum.vercel.app](https://briefer-plum.vercel.app) |
+| Manual trigger | `https://<your-project>.vercel.app/api/daily-brief?force=true&secret=<CRON_SECRET>` |
 
-Set a `CRON_SECRET` env var (any random string). Vercel automatically sends
-`Authorization: Bearer <CRON_SECRET>` on its own cron requests, and the
-handler checks for that — so once it's set, nobody else can trigger your
-endpoint or make it leak calendar contents via the JSON response. You can
-still trigger it manually for testing:
+`.env` is gitignored. `GMAIL_REFRESH_TOKEN` and `CRON_SECRET` both grant real access (sending mail as you, and triggering the endpoint) — they live in Vercel's environment variables, never in the repository.
+
+---
+
+## API
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/daily-brief` | `CRON_SECRET`, if set (`Authorization: Bearer <secret>` or `?secret=`) | Builds and sends today's brief, or skips if there are no events. `?force=true` bypasses the send-time-window check (not the empty-day skip). |
+
+There's no other surface — no database, no user accounts, no additional routes.
+
+---
+
+## Design decisions
+
+**Two daily Cron firings instead of one.** Vercel Cron schedules are UTC-only, so a single fixed schedule would drift an hour whenever daylight saving changes. Firing at both `12:00` and `13:00` UTC and letting the function itself check the current local hour keeps the send time correct year-round without an external timezone-aware scheduler.
+
+**A plain (`tzid`-stripped) `RRule` rebuilt for recurrence expansion.** `node-ical`'s tzid-aware `RRule` instance ties its own `.between()` computation to the server's local timezone — a bug that only coincidentally produces correct results when the server and the calendar share a timezone, which is exactly what made it invisible during local development and only surfaced once deployed to Vercel's UTC runtime. Rebuilding the rule without `tzid`, using the already-correct floating `dtstart`, makes the expansion pure and environment-independent.
+
+**All-day event boundaries re-derived from local `Date` getters.** For the same underlying reason — `node-ical` constructs date-only values via the server's local `Date` constructor — trusting the parsed instant directly meant an all-day item could shift by a server's UTC offset and, in the worst case, bleed onto the wrong calendar day entirely.
+
+**Skip-if-empty, not skip-if-weekend.** The condition is "no events today," not "is it Saturday" — a quiet weekday holiday skips too, and a weekend with something actually on it still sends.
+
+**One committed dark theme for the email, not an adaptive light/dark toggle.** Explicit colors that never depend on the recipient's mail client theme setting render predictably everywhere, which matters more here than matching every inbox's own appearance.
+
+**An ICS feed, not a live Calendar API integration.** Avoids a second OAuth flow just to read events. The tradeoff is real-time-ness — the feed only refreshes on the calendar provider's own schedule — which is a fine trade for a once-a-day brief.
+
+---
+
+## Roadmap
+
+**Near term**
+- Multi-recipient support — sending the same or different briefs to more than one person (scoped in design discussion, not yet built: the current single `EMAIL_TO`/`ICS_URL` pair would need to become a list, and Vercel's Cron limits mean multiple send times/timezones would need either a Pro plan or an external scheduler)
+- A required, rather than optional, `CRON_SECRET`
+
+**Later**
+- Self-serve calendar registration instead of manually editing environment variables and redeploying
+- Per-recipient timezone and send-hour configuration
+
+---
+
+## Project structure
 
 ```
-https://<your-project>.vercel.app/api/daily-brief?force=true&secret=<CRON_SECRET>
+briefer/
+├── api/
+│   └── daily-brief.ts     # Vercel serverless function, Cron target
+├── lib/
+│   ├── ics.ts              # fetch + parse ICS, expand recurrence
+│   ├── brief.ts             # build subject/text/html
+│   ├── email.ts              # Gmail API send
+│   └── run.ts                  # orchestration + send-or-skip decision
+├── scripts/
+│   ├── get-refresh-token.ts  # one-time Gmail OAuth setup
+│   └── run-local.ts            # local preview / real-send testing
+├── public/
+│   └── index.html               # placeholder static page
+├── vercel.json                     # Cron schedule
+└── .env                              # not committed
 ```
+
+---
 
 ## Notes
 
-- The free-time window (8am–6pm Central) and 15-minute minimum-gap filter
-  are constants at the top of `lib/brief.ts` — change `WINDOW_START_HOUR`
-  and `WINDOW_END_HOUR` there if you want a different range.
-- `SEND_HOUR_LOCAL` (default `7`) controls the local hour that counts as
-  "the" send window in `lib/run.ts` — change it if you'd rather get the
-  brief at a different hour, and update the two UTC entries in
-  `vercel.json` to bracket it (target hour and target hour + 1, both in
-  UTC, one for standard time and one for daylight time).
+This is a personal automation tool, not a product — it has exactly one intended recipient today and no accounts, sessions, or stored data beyond what's already in the calendar feed itself. The Gmail OAuth client requests only the minimal `gmail.send` scope, and the refresh token it produces can send mail as the configured account but cannot read anything else in it.
