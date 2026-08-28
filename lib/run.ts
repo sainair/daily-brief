@@ -26,6 +26,10 @@ export async function runDailyBrief(opts: { force?: boolean; now?: Date } = {}):
   const toAddr = requireEnv("EMAIL_TO");
 
   const events = await getEventsForDay(icsSource, now);
+  if (events.length === 0) {
+    return { sent: false, reason: "no events today", eventCount: 0 };
+  }
+
   const { subject, text, html } = buildBrief(events, now);
   await sendBriefEmail({ from: fromAddr, to: toAddr, subject, text, html });
 
