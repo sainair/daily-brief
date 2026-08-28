@@ -14,12 +14,12 @@
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.4.2",
-    "googleapis": "^140.0.1",
-    "node-ical": "^0.19.0"
+    "googleapis": "^176.0.0",
+    "node-ical": "^0.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@vercel/node": "^3.2.29",
+    "@vercel/node": "^9.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
