@@ -1,4 +1,5 @@
 import ical, { VEvent } from "node-ical";
+import { RRule } from "rrule";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
 export const TIMEZONE = "America/Chicago";
@@ -47,6 +48,18 @@ function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart < bEnd && aEnd > bStart;
 }
 
+// All-day (VALUE=DATE) values have no timezone of their own; node-ical
+// constructs them via the *server's local* Date constructor, so their
+// instants shift with the server's timezone (e.g. midnight UTC on a Vercel
+// server vs. midnight Central on a dev machine) — but their local getters
+// (Y/M/D) stay correct regardless, since construction and reading use that
+// same local convention. Re-anchor to real Central-day boundaries via those.
+function resolveAllDayBounds(rawStart: Date, rawEnd: Date, tz: string): { start: Date; end: Date } {
+  const start = fromZonedTime(new Date(rawStart.getFullYear(), rawStart.getMonth(), rawStart.getDate()), tz);
+  const end = fromZonedTime(new Date(rawEnd.getFullYear(), rawEnd.getMonth(), rawEnd.getDate()), tz);
+  return { start, end };
+}
+
 async function fetchEvents(icsSource: string): Promise<Record<string, VEvent>> {
   const isUrl = /^https?:\/\//i.test(icsSource);
   const data = isUrl ? await ical.async.fromURL(icsSource) : await ical.async.parseFile(icsSource);
@@ -78,6 +91,18 @@ export async function getEventsForDay(icsSource: string, reference: Date): Promi
       // recurrence-id overrides — all of which node-ical resolves to real
       // instants already).
       const tzid: string | undefined = (event.rrule as any).origOptions?.tzid;
+
+      // node-ical's RRule instance ties its own .between() computation to
+      // the *server's* local timezone whenever a tzid is attached (a quirk
+      // of the underlying rrule package's tzid support) — results are only
+      // correct by coincidence when the server's local zone happens to
+      // match the event's zone. dtstart is already a "floating" value (UTC
+      // getters hold the wall-clock time), so rebuilding a plain RRule with
+      // tzid stripped makes .between() do pure, environment-independent
+      // floating-date arithmetic instead.
+      const { tzid: _droppedTzid, ...plainRRuleOptions } = (event.rrule as any).origOptions ?? {};
+      const rrule = new RRule({ ...plainRRuleOptions, dtstart: event.rrule.options.dtstart });
+
       const toRealInstant = (floating: Date): Date =>
         tzid
           ? fromZonedTime(
@@ -112,7 +137,7 @@ export async function getEventsForDay(icsSource: string, reference: Date): Promi
         );
       };
 
-      const occurrences = event.rrule.between(
+      const occurrences = rrule.between(
         toFloating(new Date(dayStart.getTime() - duration)),
         toFloating(new Date(dayEnd.getTime() + duration)),
         true
@@ -130,8 +155,9 @@ export async function getEventsForDay(icsSource: string, reference: Date): Promi
           (r) => Math.abs((r as any).recurrenceid.getTime() - realStart.getTime()) < 1000
         ) as VEvent | undefined;
 
-        const effectiveStart = override ? override.start : realStart;
-        const effectiveEnd = override ? override.end : new Date(realStart.getTime() + duration);
+        let effectiveStart = override ? override.start : realStart;
+        let effectiveEnd = override ? override.end : new Date(realStart.getTime() + duration);
+        if (allDay) ({ start: effectiveStart, end: effectiveEnd } = resolveAllDayBounds(effectiveStart, effectiveEnd, TIMEZONE));
 
         if (overlaps(effectiveStart, effectiveEnd, dayStart, dayEnd)) {
           results.push({
@@ -144,15 +170,18 @@ export async function getEventsForDay(icsSource: string, reference: Date): Promi
           });
         }
       }
-    } else if (overlaps(event.start, event.end, dayStart, dayEnd)) {
-      results.push({
-        title: event.summary ?? "(untitled)",
-        start: event.start,
-        end: event.end,
-        allDay,
-        location: event.location ?? null,
-        attendees: normalizeAttendees(event.attendee),
-      });
+    } else {
+      const { start, end } = allDay ? resolveAllDayBounds(event.start, event.end, TIMEZONE) : event;
+      if (overlaps(start, end, dayStart, dayEnd)) {
+        results.push({
+          title: event.summary ?? "(untitled)",
+          start,
+          end,
+          allDay,
+          location: event.location ?? null,
+          attendees: normalizeAttendees(event.attendee),
+        });
+      }
     }
   }
 
