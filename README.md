@@ -6,6 +6,8 @@ A daily agenda emailed straight from a calendar feed. No dashboard to check, no 
 
 Built as a small, real automation project covering calendar/recurrence parsing, timezone-correct scheduling on a serverless platform, and OAuth-based email delivery — the kind of infrastructure that looks trivial until it has to survive a daylight-saving transition or a server in a different timezone than the one it was tested on.
 
+![Briefer UI](public/Briefer.png)
+
 ---
 
 ## Tech stack
