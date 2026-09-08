@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Briefer — Privacy Policy</title>
+  </head>
+  <body>
+    <h1>Privacy Policy</h1>
+    <p><em>Last updated: September 2026</em></p>
+
+    <p>
+      Briefer is a personal automation tool built and operated by a single
+      developer for their own use. It is not a public product, does not
+      accept sign-ups, and is not intended for use by anyone other than its
+      operator.
+    </p>
+
+    <h2>What it accesses</h2>
+    <p>
+      Briefer reads calendar events from a private ICS feed URL supplied by
+      its operator, and sends email through the Gmail API using an OAuth
+      token the operator granted to their own Google account. It requests
+      only the <code>gmail.send</code> scope, which allows sending email as
+      that account — it cannot read, search, or modify any existing email in
+      the account.
+    </p>
+
+    <h2>What it does with that data</h2>
+    <p>
+      Each day, the calendar feed is fetched fresh, used to build a
+      plain-text and HTML summary of that day's events, and sent by email to
+      the operator. No calendar data, email content, or account information
+      is stored in a database or persisted anywhere between runs — nothing
+      is logged, retained, sold, or shared with any third party.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions about this tool or this policy can be sent to
+      <a href="mailto:sai150306@gmail.com">sai150306@gmail.com</a>.
+    </p>
+  </body>
+</html>
