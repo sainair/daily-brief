@@ -18,8 +18,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const force = req.query.force === "true";
 
+  // ?date=YYYY-MM-DD runs the brief against another day, so the send path can
+  // be exercised from production on a day that would otherwise be skipped as
+  // empty. Anchored at noon UTC to land on the intended local day under DST.
+  let now: Date | undefined;
+  const dateParam = req.query.date;
+  if (typeof dateParam === "string" && dateParam.length > 0) {
+    now = new Date(`${dateParam}T12:00:00Z`);
+    if (Number.isNaN(now.getTime())) {
+      res.status(400).json({ error: `Invalid date: ${dateParam} (expected YYYY-MM-DD)` });
+      return;
+    }
+  }
+
   try {
-    const result = await runDailyBrief({ force });
+    const result = await runDailyBrief({ force, now });
     res.status(200).json(result);
   } catch (err: any) {
     console.error(err);
