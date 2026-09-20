@@ -7,7 +7,12 @@
       "Bash(node -e ' *)",
       "Bash(npx tsc *)",
       "Bash(npx ts-node *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "WebFetch(domain:resend.com)",
+      "WebSearch",
+      "Bash(npm uninstall *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\({deps:p.dependencies,scripts:p.scripts},null,2\\)\\)\")",
+      "Bash(python3 -)"
     ]
   }
 }

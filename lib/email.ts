@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { Resend } from "resend";
 
 export interface SendArgs {
   from: string;
@@ -8,57 +8,19 @@ export interface SendArgs {
   html: string;
 }
 
-function buildRawMessage({ from, to, subject, text, html }: SendArgs): string {
-  const boundary = "briefer_boundary_" + Date.now();
-  const lines = [
-    `From: ${from}`,
-    `To: ${to}`,
-    `Subject: ${encodeSubject(subject)}`,
-    "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    "",
-    `--${boundary}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "",
-    text,
-    "",
-    `--${boundary}`,
-    "Content-Type: text/html; charset=UTF-8",
-    "",
-    html,
-    "",
-    `--${boundary}--`,
-  ];
-  return lines.join("\r\n");
-}
+export async function sendBriefEmail({ from, to, subject, text, html }: SendArgs): Promise<void> {
+  const resend = new Resend(requireEnv("RESEND_KEY"));
 
-function encodeSubject(subject: string): string {
-  return `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`;
-}
+  // The SDK reports failures in `error` rather than throwing, so an unchecked
+  // call would look like a successful send while nothing was delivered.
+  const { data, error } = await resend.emails.send({ from, to, subject, text, html });
 
-function toBase64Url(input: string): string {
-  return Buffer.from(input, "utf-8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-export async function sendBriefEmail(args: SendArgs): Promise<void> {
-  const clientId = requireEnv("GMAIL_CLIENT_ID");
-  const clientSecret = requireEnv("GMAIL_CLIENT_SECRET");
-  const refreshToken = requireEnv("GMAIL_REFRESH_TOKEN");
-
-  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, "urn:ietf:wg:oauth:2.0:oob");
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-  const raw = toBase64Url(buildRawMessage(args));
-
-  await gmail.users.messages.send({
-    userId: "me",
-    requestBody: { raw },
-  });
+  if (error) {
+    throw new Error(`Resend failed to send: ${error.name} — ${error.message}`);
+  }
+  if (!data?.id) {
+    throw new Error("Resend returned no message id; treating as a failed send.");
+  }
 }
 
 function requireEnv(name: string): string {

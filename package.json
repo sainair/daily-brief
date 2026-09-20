@@ -2,20 +2,19 @@
   "name": "briefer",
   "version": "1.0.0",
   "private": true,
-  "description": "Daily calendar brief emailed every morning, built from an ICS feed and sent via the Gmail API.",
+  "description": "Daily calendar brief emailed every morning, built from an ICS feed and sent via Resend.",
   "type": "commonjs",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "get-refresh-token": "ts-node scripts/get-refresh-token.ts",
     "brief:local": "ts-node scripts/run-local.ts"
   },
   "dependencies": {
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.4.2",
-    "googleapis": "^176.0.0",
     "node-ical": "^0.22.0",
+    "resend": "^6.28.1",
     "rrule": "^2.8.1"
   },
   "devDependencies": {
